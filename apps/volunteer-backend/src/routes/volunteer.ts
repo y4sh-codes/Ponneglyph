@@ -8,9 +8,7 @@ import {
 } from "../cache";
 import { INTEREST_CATALOG } from "../constants/interests";
 import {
-  asObject,
   asStringArray,
-  dedupeStrings,
   pool,
   withTransaction,
 } from "../db";
@@ -22,9 +20,7 @@ import type {
   AppBindings,
   ConnectionRequest,
   PostAction,
-  PostInteractionMap,
   RequestStatus,
-  TopicScoreMap,
 } from "../types";
 import {
   normalizeInterests,
@@ -84,8 +80,8 @@ function asConnectionRequestArray(input: unknown): ConnectionRequest[] {
         toUserId: obj.toUserId,
         status,
         createdAt: obj.createdAt,
-        respondedAt: obj.respondedAt,
-        message: obj.message,
+        ...(typeof obj.respondedAt === "string" ? { respondedAt: obj.respondedAt } : {}),
+        ...(typeof obj.message === "string" ? { message: obj.message } : {}),
       } satisfies ConnectionRequest;
     })
     .filter((item): item is ConnectionRequest => item !== null);
@@ -144,6 +140,10 @@ volunteerRoutes.get("/volunteers/me", async (c) => {
   }
 
   const row = result.rows[0];
+  if (!row) {
+    return c.json({ error: "Volunteer profile not found" }, 404);
+  }
+
   return c.json({
     user: {
       id: row.id,
@@ -191,7 +191,12 @@ volunteerRoutes.put("/volunteers/me/interests", async (c) => {
     return c.json({ error: "Volunteer profile not found" }, 404);
   }
 
-  const connections = asStringArray(existing.rows[0].connections);
+  const existingRow = existing.rows[0];
+  if (!existingRow) {
+    return c.json({ error: "Volunteer profile not found" }, 404);
+  }
+
+  const connections = asStringArray(existingRow.connections);
 
   await pool.query(
     `UPDATE volunteer
@@ -278,37 +283,6 @@ volunteerRoutes.post("/volunteers/:targetUserId/connect", async (c) => {
     );
   }
 
-  const [senderResult, targetResult] = await Promise.all([
-    pool.query<{ connections: string[] | null; sent_requests: ConnectionRequest[] | null }>(
-      "SELECT connections, sent_requests FROM volunteer WHERE user_id = $1 LIMIT 1",
-      [fromUserId],
-    ),
-    pool.query<{ inbox_requests: ConnectionRequest[] | null }>(
-      "SELECT inbox_requests FROM volunteer WHERE user_id = $1 LIMIT 1",
-      [targetUserId],
-    ),
-  ]);
-
-  if (senderResult.rowCount === 0 || targetResult.rowCount === 0) {
-    return c.json({ error: "Volunteer profile not found" }, 404);
-  }
-
-  const senderConnections = asStringArray(senderResult.rows[0].connections);
-  if (senderConnections.includes(targetUserId)) {
-    return c.json({ error: "You are already connected" }, 409);
-  }
-
-  const senderSentRequests = asConnectionRequestArray(senderResult.rows[0].sent_requests);
-  const pendingAlreadyExists = senderSentRequests.some(
-    (request) => request.toUserId === targetUserId && request.status === "pending",
-  );
-
-  if (pendingAlreadyExists) {
-    return c.json({ error: "Connection request already pending" }, 409);
-  }
-
-  const targetInboxRequests = asConnectionRequestArray(targetResult.rows[0].inbox_requests);
-
   const request: ConnectionRequest = {
     requestId: crypto.randomUUID(),
     fromUserId,
@@ -318,26 +292,80 @@ volunteerRoutes.post("/volunteers/:targetUserId/connect", async (c) => {
     message: parsed.data.message,
   };
 
-  const nextSenderSent = [...senderSentRequests, request];
-  const nextTargetInbox = [...targetInboxRequests, request];
+  const mutationResult = await withTransaction(async (client) => {
+    const lockedUsers = await client.query<{ user_id: string }>(
+      `SELECT user_id
+       FROM volunteer
+       WHERE user_id = ANY($1::text[])
+       FOR UPDATE`,
+      [[fromUserId, targetUserId]],
+    );
 
-  await withTransaction(async (client) => {
+    if (lockedUsers.rowCount !== 2) {
+      return { kind: "missing" as const };
+    }
+
+    const alreadyConnectedResult = await client.query(
+      `SELECT 1
+       FROM volunteer
+       WHERE user_id = $1
+         AND connections @> $2::jsonb
+       LIMIT 1`,
+      [fromUserId, JSON.stringify([targetUserId])],
+    );
+
+    if ((alreadyConnectedResult.rowCount ?? 0) > 0) {
+      return { kind: "connected" as const };
+    }
+
+    const pendingAlreadyExistsResult = await client.query(
+      `SELECT 1
+       FROM volunteer v
+       WHERE v.user_id = $1
+         AND EXISTS (
+           SELECT 1
+           FROM jsonb_array_elements(v.sent_requests) AS req
+           WHERE req->>'toUserId' = $2
+             AND req->>'status' = 'pending'
+         )
+       LIMIT 1`,
+      [fromUserId, targetUserId],
+    );
+
+    if ((pendingAlreadyExistsResult.rowCount ?? 0) > 0) {
+      return { kind: "pending" as const };
+    }
+
     await client.query(
       `UPDATE volunteer
-       SET sent_requests = $2::jsonb,
+       SET sent_requests = sent_requests || jsonb_build_array($2::jsonb),
            updated_at = NOW()
        WHERE user_id = $1`,
-      [fromUserId, JSON.stringify(nextSenderSent)],
+      [fromUserId, JSON.stringify(request)],
     );
 
     await client.query(
       `UPDATE volunteer
-       SET inbox_requests = $2::jsonb,
+       SET inbox_requests = inbox_requests || jsonb_build_array($2::jsonb),
            updated_at = NOW()
        WHERE user_id = $1`,
-      [targetUserId, JSON.stringify(nextTargetInbox)],
+      [targetUserId, JSON.stringify(request)],
     );
+
+    return { kind: "ok" as const };
   });
+
+  if (mutationResult.kind === "missing") {
+    return c.json({ error: "Volunteer profile not found" }, 404);
+  }
+
+  if (mutationResult.kind === "connected") {
+    return c.json({ error: "You are already connected" }, 409);
+  }
+
+  if (mutationResult.kind === "pending") {
+    return c.json({ error: "Connection request already pending" }, 409);
+  }
 
   await invalidateSuggestionCache([fromUserId, targetUserId]);
 
@@ -358,7 +386,12 @@ volunteerRoutes.get("/volunteers/me/inbox", async (c) => {
     return c.json({ error: "Volunteer profile not found" }, 404);
   }
 
-  const inbox = asConnectionRequestArray(result.rows[0].inbox_requests).sort((left, right) => {
+  const inboxRow = result.rows[0];
+  if (!inboxRow) {
+    return c.json({ error: "Volunteer profile not found" }, 404);
+  }
+
+  const inbox = asConnectionRequestArray(inboxRow.inbox_requests).sort((left, right) => {
     if (left.status !== right.status) {
       if (left.status === "pending") {
         return -1;
@@ -390,99 +423,170 @@ volunteerRoutes.post("/volunteers/me/inbox/:requestId/respond", async (c) => {
     );
   }
 
-  const meResult = await pool.query<{
-    inbox_requests: ConnectionRequest[] | null;
-    connections: string[] | null;
-  }>(
-    "SELECT inbox_requests, connections FROM volunteer WHERE user_id = $1 LIMIT 1",
-    [userId],
-  );
-
-  if (meResult.rowCount === 0) {
-    return c.json({ error: "Volunteer profile not found" }, 404);
-  }
-
-  const meInbox = asConnectionRequestArray(meResult.rows[0].inbox_requests);
-  const targetRequest = meInbox.find((item) => item.requestId === requestId && item.toUserId === userId);
-
-  if (!targetRequest) {
-    return c.json({ error: "Connection request not found" }, 404);
-  }
-
-  if (targetRequest.status !== "pending") {
-    return c.json({ error: "Connection request already processed" }, 409);
-  }
-
-  const senderId = targetRequest.fromUserId;
-
-  const senderResult = await pool.query<{
-    sent_requests: ConnectionRequest[] | null;
-    connections: string[] | null;
-  }>(
-    "SELECT sent_requests, connections FROM volunteer WHERE user_id = $1 LIMIT 1",
-    [senderId],
-  );
-
-  if (senderResult.rowCount === 0) {
-    return c.json({ error: "Sender volunteer profile not found" }, 404);
-  }
-
   const nextStatus: RequestStatus = parsed.data.action === "accept" ? "accepted" : "rejected";
   const respondedAt = toIsoNow();
 
-  const nextInbox = meInbox.map((request) =>
-    request.requestId === requestId
-      ? {
-          ...request,
-          status: nextStatus,
-          respondedAt,
-        }
-      : request,
-  );
+  const responseResult = await withTransaction(async (client) => {
+    const meProfileResult = await client.query(
+      `SELECT user_id
+       FROM volunteer
+       WHERE user_id = $1
+       FOR UPDATE`,
+      [userId],
+    );
 
-  const senderSent = asConnectionRequestArray(senderResult.rows[0].sent_requests);
-  const nextSenderSent = senderSent.map((request) =>
-    request.requestId === requestId
-      ? {
-          ...request,
-          status: nextStatus,
-          respondedAt,
-        }
-      : request,
-  );
+    if (meProfileResult.rowCount === 0) {
+      return { kind: "missing-profile" as const };
+    }
 
-  const myConnections = asStringArray(meResult.rows[0].connections);
-  const senderConnections = asStringArray(senderResult.rows[0].connections);
+    const requestResult = await client.query<{
+      from_user_id: string;
+      status: RequestStatus;
+    }>(
+      `SELECT req->>'fromUserId' AS from_user_id,
+              req->>'status' AS status
+       FROM volunteer v
+       CROSS JOIN LATERAL jsonb_array_elements(v.inbox_requests) AS req
+       WHERE v.user_id = $1
+         AND req->>'requestId' = $2
+         AND req->>'toUserId' = $1
+       LIMIT 1`,
+      [userId, requestId],
+    );
 
-  let nextMyConnections = myConnections;
-  let nextSenderConnections = senderConnections;
+    if (requestResult.rowCount === 0) {
+      return { kind: "request-not-found" as const };
+    }
 
-  if (nextStatus === "accepted") {
-    nextMyConnections = dedupeStrings([...myConnections, senderId]);
-    nextSenderConnections = dedupeStrings([...senderConnections, userId]);
-  }
+    const requestRow = requestResult.rows[0];
+    if (!requestRow) {
+      return { kind: "request-not-found" as const };
+    }
 
-  await withTransaction(async (client) => {
+    const senderId = requestRow.from_user_id;
+    if (requestRow.status !== "pending") {
+      return { kind: "already-processed" as const };
+    }
+
+    const senderProfileResult = await client.query(
+      `SELECT user_id
+       FROM volunteer
+       WHERE user_id = $1
+       FOR UPDATE`,
+      [senderId],
+    );
+
+    if (senderProfileResult.rowCount === 0) {
+      return { kind: "missing-sender" as const };
+    }
+
     await client.query(
-      `UPDATE volunteer
-       SET inbox_requests = $2::jsonb,
-           connections = $3::jsonb,
+      `UPDATE volunteer v
+       SET inbox_requests = updates.updated_inbox,
+           connections = CASE
+             WHEN $3::boolean AND NOT (v.connections @> $4::jsonb)
+               THEN v.connections || $4::jsonb
+             ELSE v.connections
+           END,
            updated_at = NOW()
-       WHERE user_id = $1`,
-      [userId, JSON.stringify(nextInbox), JSON.stringify(nextMyConnections)],
+       FROM (
+         SELECT owner.user_id,
+                COALESCE(
+                  jsonb_agg(
+                    CASE
+                      WHEN req->>'requestId' = $2 THEN
+                        jsonb_set(
+                          jsonb_set(req, '{status}', to_jsonb($5::text), false),
+                          '{respondedAt}',
+                          to_jsonb($6::text),
+                          true
+                        )
+                      ELSE req
+                    END
+                  ),
+                  '[]'::jsonb
+                ) AS updated_inbox
+         FROM volunteer owner
+         CROSS JOIN LATERAL jsonb_array_elements(owner.inbox_requests) AS req
+         WHERE owner.user_id = $1
+         GROUP BY owner.user_id
+       ) AS updates
+       WHERE v.user_id = updates.user_id`,
+      [
+        userId,
+        requestId,
+        nextStatus === "accepted",
+        JSON.stringify([senderId]),
+        nextStatus,
+        respondedAt,
+      ],
     );
 
     await client.query(
-      `UPDATE volunteer
-       SET sent_requests = $2::jsonb,
-           connections = $3::jsonb,
+      `UPDATE volunteer v
+       SET sent_requests = updates.updated_sent,
+           connections = CASE
+             WHEN $3::boolean AND NOT (v.connections @> $4::jsonb)
+               THEN v.connections || $4::jsonb
+             ELSE v.connections
+           END,
            updated_at = NOW()
-       WHERE user_id = $1`,
-      [senderId, JSON.stringify(nextSenderSent), JSON.stringify(nextSenderConnections)],
+       FROM (
+         SELECT owner.user_id,
+                COALESCE(
+                  jsonb_agg(
+                    CASE
+                      WHEN req->>'requestId' = $2 THEN
+                        jsonb_set(
+                          jsonb_set(req, '{status}', to_jsonb($5::text), false),
+                          '{respondedAt}',
+                          to_jsonb($6::text),
+                          true
+                        )
+                      ELSE req
+                    END
+                  ),
+                  '[]'::jsonb
+                ) AS updated_sent
+         FROM volunteer owner
+         CROSS JOIN LATERAL jsonb_array_elements(owner.sent_requests) AS req
+         WHERE owner.user_id = $1
+         GROUP BY owner.user_id
+       ) AS updates
+       WHERE v.user_id = updates.user_id`,
+      [
+        senderId,
+        requestId,
+        nextStatus === "accepted",
+        JSON.stringify([userId]),
+        nextStatus,
+        respondedAt,
+      ],
     );
+
+    return {
+      kind: "ok" as const,
+      senderId,
+    };
   });
 
-  await invalidateSuggestionCache([userId, senderId]);
+  if (responseResult.kind === "missing-profile") {
+    return c.json({ error: "Volunteer profile not found" }, 404);
+  }
+
+  if (responseResult.kind === "request-not-found") {
+    return c.json({ error: "Connection request not found" }, 404);
+  }
+
+  if (responseResult.kind === "already-processed") {
+    return c.json({ error: "Connection request already processed" }, 409);
+  }
+
+  if (responseResult.kind === "missing-sender") {
+    return c.json({ error: "Sender volunteer profile not found" }, 404);
+  }
+
+  await invalidateSuggestionCache([userId, responseResult.senderId]);
 
   return c.json({
     message: `Request ${nextStatus}`,
@@ -502,7 +606,12 @@ volunteerRoutes.get("/volunteers/me/connections", async (c) => {
     return c.json({ error: "Volunteer profile not found" }, 404);
   }
 
-  const connections = asStringArray(result.rows[0].connections);
+  const connectionsRow = result.rows[0];
+  if (!connectionsRow) {
+    return c.json({ error: "Volunteer profile not found" }, 404);
+  }
+
+  const connections = asStringArray(connectionsRow.connections);
   if (connections.length === 0) {
     return c.json({ connections: [] });
   }
@@ -539,72 +648,114 @@ volunteerRoutes.post("/volunteers/me/posts/engagement", async (c) => {
 
   const { postId, action } = parsed.data;
   const topics = normalizeTopics(parsed.data.topics ?? []);
+  const actionWeight: Record<PostAction, number> = {
+    like: 3,
+    save: 2,
+    open: 1,
+  };
+  const openedAt = action === "open" ? toIsoNow() : null;
 
-  const result = await pool.query<{
-    post_engagement: PostInteractionMap | null;
-    topic_engagement: TopicScoreMap | null;
-    connections: string[] | null;
-  }>(
-    `SELECT post_engagement, topic_engagement, connections
-     FROM volunteer
-     WHERE user_id = $1
-     LIMIT 1`,
-    [userId],
+  const result = await pool.query<{ connections: string[] | null }>(
+    `WITH RECURSIVE
+       selected AS (
+         SELECT user_id, post_engagement, topic_engagement, connections
+         FROM volunteer
+         WHERE user_id = $1
+         FOR UPDATE
+       ),
+       post_updated AS (
+         SELECT
+           s.user_id,
+           s.connections,
+           s.topic_engagement,
+           jsonb_set(
+             s.post_engagement,
+             ARRAY[$2::text],
+             jsonb_strip_nulls(
+               jsonb_build_object(
+                 'likes', COALESCE((s.post_engagement -> $2 ->> 'likes')::int, 0) + CASE WHEN $3 = 'like' THEN 1 ELSE 0 END,
+                 'saves', COALESCE((s.post_engagement -> $2 ->> 'saves')::int, 0) + CASE WHEN $3 = 'save' THEN 1 ELSE 0 END,
+                 'opens', COALESCE((s.post_engagement -> $2 ->> 'opens')::int, 0) + CASE WHEN $3 = 'open' THEN 1 ELSE 0 END,
+                 'topics', COALESCE(
+                   (
+                     SELECT jsonb_agg(topic_value)
+                     FROM (
+                       SELECT DISTINCT topic_value
+                       FROM (
+                         SELECT jsonb_array_elements_text(COALESCE(s.post_engagement -> $2 -> 'topics', '[]'::jsonb)) AS topic_value
+                         UNION ALL
+                         SELECT unnest($4::text[]) AS topic_value
+                       ) AS topic_union
+                     ) AS deduped_topics
+                   ),
+                   '[]'::jsonb
+                 ),
+                 'lastOpenedAt',
+                 CASE
+                   WHEN $3 = 'open' THEN to_jsonb($5::text)
+                   ELSE s.post_engagement -> $2 -> 'lastOpenedAt'
+                 END
+               )
+             ),
+             true
+           ) AS post_engagement
+         FROM selected s
+       ),
+       topic_updated AS (
+         SELECT
+           p.user_id,
+           p.connections,
+           p.post_engagement,
+           p.topic_engagement AS topic_map,
+           1 AS idx
+         FROM post_updated p
+
+         UNION ALL
+
+         SELECT
+           t.user_id,
+           t.connections,
+           t.post_engagement,
+           jsonb_set(
+             t.topic_map,
+             ARRAY[$4[t.idx]::text],
+             to_jsonb(COALESCE((t.topic_map ->> $4[t.idx])::int, 0) + $6::int),
+             true
+           ) AS topic_map,
+           t.idx + 1 AS idx
+         FROM topic_updated t
+         WHERE t.idx <= COALESCE(array_length($4::text[], 1), 0)
+       ),
+       final_state AS (
+         SELECT
+           user_id,
+           connections,
+           post_engagement,
+           topic_map AS topic_engagement
+         FROM topic_updated
+         ORDER BY idx DESC
+         LIMIT 1
+       )
+     UPDATE volunteer v
+     SET post_engagement = f.post_engagement,
+         topic_engagement = f.topic_engagement,
+         updated_at = NOW()
+     FROM final_state f
+     WHERE v.user_id = f.user_id
+     RETURNING v.connections`,
+    [userId, postId, action, topics, openedAt, actionWeight[action]],
   );
 
   if (result.rowCount === 0) {
     return c.json({ error: "Volunteer profile not found" }, 404);
   }
 
-  const row = result.rows[0];
-  const postMap = asObject<PostInteractionMap>(row.post_engagement, {});
-  const topicMap = asObject<TopicScoreMap>(row.topic_engagement, {});
-
-  const current = postMap[postId] ?? {
-    likes: 0,
-    saves: 0,
-    opens: 0,
-    topics: [] as string[],
-  };
-
-  const nextPost = {
-    ...current,
-    topics: dedupeStrings([...current.topics, ...topics]),
-  };
-
-  if (action === "like") {
-    nextPost.likes += 1;
-  }
-  if (action === "save") {
-    nextPost.saves += 1;
-  }
-  if (action === "open") {
-    nextPost.opens += 1;
-    nextPost.lastOpenedAt = toIsoNow();
+  const engagementRow = result.rows[0];
+  if (!engagementRow) {
+    return c.json({ error: "Volunteer profile not found" }, 404);
   }
 
-  postMap[postId] = nextPost;
-
-  const actionWeight: Record<PostAction, number> = {
-    like: 3,
-    save: 2,
-    open: 1,
-  };
-
-  for (const topic of topics) {
-    topicMap[topic] = (topicMap[topic] ?? 0) + actionWeight[action];
-  }
-
-  await pool.query(
-    `UPDATE volunteer
-     SET post_engagement = $2::jsonb,
-         topic_engagement = $3::jsonb,
-         updated_at = NOW()
-     WHERE user_id = $1`,
-    [userId, JSON.stringify(postMap), JSON.stringify(topicMap)],
-  );
-
-  const connections = asStringArray(row.connections);
+  const connections = asStringArray(engagementRow.connections);
   await invalidateSuggestionCache([userId, ...connections]);
 
   return c.json({

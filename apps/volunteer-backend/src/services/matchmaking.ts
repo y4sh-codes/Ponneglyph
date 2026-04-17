@@ -10,6 +10,9 @@ type CandidateRow = {
   connections: string[] | null;
   topic_engagement: TopicScoreMap | null;
   post_engagement: PostInteractionMap | null;
+  common_interests: string[] | null;
+  mutual_connections: number;
+  interests_score: number;
 };
 
 type Suggestion = {
@@ -21,20 +24,6 @@ type Suggestion = {
   mutualConnections: number;
   reasons: string[];
 };
-
-function jaccardSimilarity(a: string[], b: string[]): number {
-  if (a.length === 0 && b.length === 0) {
-    return 0;
-  }
-
-  const setA = new Set(a);
-  const setB = new Set(b);
-
-  const intersection = [...setA].filter((value) => setB.has(value)).length;
-  const union = new Set([...a, ...b]).size;
-
-  return union === 0 ? 0 : intersection / union;
-}
 
 function cosineFromMaps(a: TopicScoreMap, b: TopicScoreMap): number {
   const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
@@ -77,6 +66,10 @@ function interactionSimilarity(a: PostInteractionMap, b: PostInteractionMap): nu
 
     const left = a[postId];
     const right = b[postId];
+    if (!left || !right) {
+      continue;
+    }
+
     overlapScore += Math.min(left.likes, right.likes) * 3;
     overlapScore += Math.min(left.saves, right.saves) * 2;
     overlapScore += Math.min(left.opens, right.opens);
@@ -93,7 +86,7 @@ async function getProfileViewBoosts(userId: string): Promise<Map<string, number>
   for (let i = 0; i < result.length; i += 2) {
     const candidateId = result[i];
     const score = Number(result[i + 1]);
-    if (!Number.isNaN(score)) {
+    if (typeof candidateId === "string" && !Number.isNaN(score)) {
       boosts.set(candidateId, Math.min(score / 10, 1));
     }
   }
@@ -102,22 +95,17 @@ async function getProfileViewBoosts(userId: string): Promise<Map<string, number>
 }
 
 function rankCandidate(input: {
-  selfInterests: string[];
-  selfConnections: string[];
   selfTopicMap: TopicScoreMap;
   selfPostMap: PostInteractionMap;
   candidate: CandidateRow;
   profileViewBoost: number;
 }): Suggestion {
-  const candidateInterests = asStringArray(input.candidate.interests);
-  const candidateConnections = asStringArray(input.candidate.connections);
+  const commonInterests = asStringArray(input.candidate.common_interests);
+  const mutualConnections = Number(input.candidate.mutual_connections ?? 0);
+  const interestsScore = Number(input.candidate.interests_score ?? 0);
   const candidateTopicMap = asObject<TopicScoreMap>(input.candidate.topic_engagement, {});
   const candidatePostMap = asObject<PostInteractionMap>(input.candidate.post_engagement, {});
 
-  const commonInterests = input.selfInterests.filter((interest) => candidateInterests.includes(interest));
-  const mutualConnections = input.selfConnections.filter((connection) => candidateConnections.includes(connection)).length;
-
-  const interestsScore = jaccardSimilarity(input.selfInterests, candidateInterests);
   const topicScore = cosineFromMaps(input.selfTopicMap, candidateTopicMap);
   const behaviorScore = interactionSimilarity(input.selfPostMap, candidatePostMap);
   const mutualScore = Math.min(mutualConnections / 8, 1);
@@ -156,12 +144,10 @@ function rankCandidate(input: {
 
 export async function buildVolunteerSuggestions(userId: string, limit = 20): Promise<Suggestion[]> {
   const selfResult = await pool.query<{
-    interests: string[] | null;
-    connections: string[] | null;
     topic_engagement: TopicScoreMap | null;
     post_engagement: PostInteractionMap | null;
   }>(
-    `SELECT interests, connections, topic_engagement, post_engagement
+    `SELECT topic_engagement, post_engagement
      FROM volunteer
      WHERE user_id = $1`,
     [userId],
@@ -172,27 +158,82 @@ export async function buildVolunteerSuggestions(userId: string, limit = 20): Pro
   }
 
   const self = selfResult.rows[0];
+  if (!self) {
+    return [];
+  }
 
   const candidatesResult = await pool.query<CandidateRow>(
-    `SELECT u.id, u.name, u.image, v.interests, v.connections, v.topic_engagement, v.post_engagement
+    `WITH self AS (
+       SELECT
+         COALESCE(
+           ARRAY(
+             SELECT jsonb_array_elements_text(COALESCE(interests, '[]'::jsonb))
+           ),
+           ARRAY[]::text[]
+         ) AS self_interest_values,
+         COALESCE(
+           ARRAY(
+             SELECT jsonb_array_elements_text(COALESCE(connections, '[]'::jsonb))
+           ),
+           ARRAY[]::text[]
+         ) AS self_connection_values
+       FROM volunteer
+       WHERE user_id = $1
+     )
+     SELECT
+       u.id,
+       u.name,
+       u.image,
+       v.interests,
+       v.connections,
+       v.topic_engagement,
+       v.post_engagement,
+       common.common_interests,
+       mutual.mutual_connections,
+       CASE
+         WHEN unioned.union_size = 0 THEN 0
+         ELSE common.common_count::double precision / unioned.union_size::double precision
+       END AS interests_score
      FROM volunteer v
      INNER JOIN "user" u ON u.id = v.user_id
+     CROSS JOIN self
+     CROSS JOIN LATERAL (
+       SELECT
+         COALESCE(jsonb_agg(interest_value), '[]'::jsonb) AS common_interests,
+         COUNT(*)::int AS common_count
+       FROM unnest(self.self_interest_values) AS interest_value
+       WHERE v.interests ? interest_value
+     ) AS common
+     CROSS JOIN LATERAL (
+       SELECT COUNT(*)::int AS mutual_connections
+       FROM unnest(self.self_connection_values) AS connection_id
+       WHERE v.connections ? connection_id
+     ) AS mutual
+     CROSS JOIN LATERAL (
+       SELECT COUNT(DISTINCT value)::int AS union_size
+       FROM (
+         SELECT unnest(self.self_interest_values) AS value
+         UNION ALL
+         SELECT jsonb_array_elements_text(COALESCE(v.interests, '[]'::jsonb)) AS value
+       ) AS all_values
+     ) AS unioned
      WHERE v.user_id <> $1
+       AND (
+         cardinality(self.self_interest_values) = 0
+         OR v.interests ?| self.self_interest_values
+       )
+     ORDER BY interests_score DESC, mutual.mutual_connections DESC
      LIMIT 250`,
     [userId],
   );
 
   const profileViewBoosts = await getProfileViewBoosts(userId);
 
-  const selfInterests = asStringArray(self.interests);
-  const selfConnections = asStringArray(self.connections);
   const selfTopicMap = asObject<TopicScoreMap>(self.topic_engagement, {});
   const selfPostMap = asObject<PostInteractionMap>(self.post_engagement, {});
 
   const ranked = candidatesResult.rows.map((candidate) =>
     rankCandidate({
-      selfInterests,
-      selfConnections,
       selfTopicMap,
       selfPostMap,
       candidate,
