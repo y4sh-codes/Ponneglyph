@@ -1,8 +1,13 @@
 use anyhow::{Context, Result};
+use lazy_static::lazy_static;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
+
+lazy_static! {
+    static ref CLIENT: reqwest::Client = reqwest::Client::new();
+}
 
 const MAX_CONCURRENT: usize = 10;
 const MAX_RETRIES: usize = 3;
@@ -54,7 +59,7 @@ struct Embedding {
 
 /// Embed a single text string via Gemini API.
 pub async fn embed_text(text: &str, api_key: &str) -> Result<Vec<f32>> {
-    let client = reqwest::Client::new();
+    let client = &*CLIENT;
 
     let req_body = EmbedContentRequest {
         content: Content::Text {
@@ -99,7 +104,7 @@ pub async fn embed_file(
     mime_type: &str,
     api_key: &str,
 ) -> Result<Vec<f32>> {
-    let client = reqwest::Client::new();
+    let client = &*CLIENT;
 
     let req_body = EmbedContentRequest {
         content: Content::File {

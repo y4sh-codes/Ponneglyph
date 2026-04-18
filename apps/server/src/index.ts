@@ -5,6 +5,7 @@ import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { volunteerRoutes } from "../../volunteer-backend/src/routes/volunteer";
 import type { AppBindings as VolunteerBindings } from "../../volunteer-backend/src/types";
+import upload from "./routes/upload";
 
 const app = new Hono<VolunteerBindings>();
 
@@ -21,6 +22,7 @@ app.use(
 
 app.on(["POST", "GET"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 app.route("/api/volunteer", volunteerRoutes);
+app.route("/api/upload", upload);
 
 app.get("/", (c) => {
   c.header("Content-Type", "text/plain");

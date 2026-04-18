@@ -76,7 +76,7 @@ pub async fn fetch_all(query: &str) -> Result<Vec<SourceDataset>> {
         }
 
         offset += batch;
-        if offset >= total {
+        if offset >= total || batch == 0 {
             break;
         }
 
@@ -181,11 +181,14 @@ pub fn build_embedding_text(ds: &SourceDataset) -> String {
 
     let full = parts.join("\n");
 
-    // Truncate at ~6000 chars (word boundary)
+    // Truncate at ~6000 chars (word boundary), safely handling UTF-8
     if full.len() > 6000 {
-        let truncated = &full[..6000];
-        let last_space = truncated.rfind(' ').unwrap_or(6000);
-        truncated[..last_space].to_string()
+        let truncated: String = full.chars().take(6000).collect();
+        if let Some(last_space) = truncated.rfind(' ') {
+            truncated[..last_space].to_string()
+        } else {
+            truncated
+        }
     } else {
         full
     }

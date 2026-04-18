@@ -13,6 +13,10 @@
     "@Poneglyph/auth": "workspace:*",
     "@Poneglyph/db": "workspace:*",
     "@Poneglyph/env": "workspace:*",
+    "@aws-sdk/client-s3": "^3.800.0",
+    "@aws-sdk/s3-request-presigner": "^3.800.0",
+    "@hono/zod-validator": "^0.4.3",
+    "amqplib": "^0.10.5",
     "better-auth": "catalog:",
     "dotenv": "catalog:",
     "hono": "^4.8.2",
@@ -23,6 +27,7 @@
   },
   "devDependencies": {
     "@Poneglyph/config": "workspace:*",
+    "@types/amqplib": "^0.10.5",
     "@types/bun": "catalog:",
     "tsdown": "^0.16.5",
     "typescript": "^5"

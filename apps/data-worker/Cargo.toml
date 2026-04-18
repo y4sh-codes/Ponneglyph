@@ -7,7 +7,7 @@ edition = "2021"
 lambda_http = "0.14"
 lambda_runtime = "0.14"
 tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "multipart"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sqlx = { version = "0.8", features = [
@@ -26,6 +26,14 @@ uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 futures = "0.3"
 dotenvy = "0.15"
+lazy_static = "1"
+# RabbitMQ consumer
+lapin = "2"
+# Excel parsing (for non-PDF file type text extraction)
+calamine = "0.26"
+# Base64 encoding for Gemini inline data fallback
+base64 = "0.22"
+bytes = "1"
 
 [profile.release]
 opt-level = "z"

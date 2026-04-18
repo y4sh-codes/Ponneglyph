@@ -308,3 +308,66 @@ pub async fn fail_sync_log(pool: &PgPool, log_id: Uuid, error: &str) -> Result<(
 
     Ok(())
 }
+
+/// Insert a new source record for a user upload.
+/// source_type is always 'upload'. Returns the new source id.
+/// user_id is optional — pass None for anonymous/unauthenticated uploads.
+pub async fn insert_source_for_upload(
+    pool: &PgPool,
+    user_id: Option<&str>,
+    name: &str,
+) -> Result<Uuid> {
+    let row = sqlx::query(
+        r#"
+        INSERT INTO sources (user_id, name, url, source_type, is_verified)
+        VALUES ($1, $2, '', 'upload', false)
+        RETURNING id
+        "#,
+    )
+    .persistent(false)
+    .bind(user_id)
+    .bind(name)
+    .fetch_one(pool)
+    .await
+    .context("Failed to insert upload source")?;
+
+    Ok(row.get("id"))
+}
+
+/// Insert a new dataset for a user upload (no external_id).
+/// Status starts as 'pending'; embedding update sets it to 'approved'.
+pub async fn insert_upload_dataset(
+    pool: &PgPool,
+    source_id: Uuid,
+    title: &str,
+    description: &str,
+    summary: Option<&str>,
+    publisher: Option<&str>,
+    s3_keys: &[String],
+    file_types: &[String],
+    thumbnail_s3_key: Option<&str>,
+) -> Result<Uuid> {
+    let row = sqlx::query(
+        r#"
+        INSERT INTO datasets
+            (source_id, title, description, summary, publisher,
+             s3_keys, file_types, thumbnail_s3_key, dataset_status)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::file_type[], $8, 'pending')
+        RETURNING id
+        "#,
+    )
+    .persistent(false)
+    .bind(source_id)
+    .bind(title)
+    .bind(description)
+    .bind(summary)
+    .bind(publisher)
+    .bind(s3_keys)
+    .bind(file_types)
+    .bind(thumbnail_s3_key)
+    .fetch_one(pool)
+    .await
+    .context("Failed to insert upload dataset")?;
+
+    Ok(row.get("id"))
+}
