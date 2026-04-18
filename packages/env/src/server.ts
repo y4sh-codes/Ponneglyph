@@ -18,6 +18,14 @@ export const env = createEnv({
     // RabbitMQ
     RABBITMQ_URL: z.string().min(1),
     RABBITMQ_QUEUE: z.string().min(1),
+    // AI Providers
+    GOOGLE_GENERATIVE_AI_API_KEY: z.string().min(1),
+    GROQ_API_KEY: z.string().min(1),
+    // Web Search
+    TAVILY_API_KEY: z.string().min(1),
+    // Redis Cache (Upstash)
+    UPSTASH_REDIS_REST_URL: z.string().url(),
+    UPSTASH_REDIS_REST_TOKEN: z.string().min(1),
   },
   runtimeEnv: process.env,
   emptyStringAsUndefined: true,

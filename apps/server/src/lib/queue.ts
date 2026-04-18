@@ -34,7 +34,7 @@ function getFailedQueueName(queueName: string): string {
 /**
  * Publish an upload message to the RabbitMQ queue.
  * Opens a connection, publishes, then closes — keeps server stateless.
- * 
+ *
  * Messages include _retry count starting at 0 for retry tracking.
  */
 export async function publishUploadMessage(msg: UploadMessage): Promise<void> {
@@ -55,11 +55,10 @@ export async function publishUploadMessage(msg: UploadMessage): Promise<void> {
       _retry: msg._retry ?? 0,
     };
 
-    channel.sendToQueue(
-      queueName,
-      Buffer.from(JSON.stringify(messageWithRetry)),
-      { persistent: true, contentType: "application/json" },
-    );
+    channel.sendToQueue(queueName, Buffer.from(JSON.stringify(messageWithRetry)), {
+      persistent: true,
+      contentType: "application/json",
+    });
     await channel.close();
   } finally {
     await conn.close();
@@ -79,11 +78,10 @@ export async function publishToFailedQueue(msg: UploadMessage): Promise<void> {
     // Ensure failed queue exists
     await channel.assertQueue(failedQueueName, { durable: true });
 
-    channel.sendToQueue(
-      failedQueueName,
-      Buffer.from(JSON.stringify(msg)),
-      { persistent: true, contentType: "application/json" },
-    );
+    channel.sendToQueue(failedQueueName, Buffer.from(JSON.stringify(msg)), {
+      persistent: true,
+      contentType: "application/json",
+    });
     await channel.close();
   } finally {
     await conn.close();

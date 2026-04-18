@@ -37,9 +37,7 @@ export async function uploadFile(
  * Used to give the Rust worker temporary download access.
  */
 export async function getPresignedUrl(key: string): Promise<string> {
-  return getSignedUrl(
-    s3,
-    new GetObjectCommand({ Bucket: env.S3_BUCKET_NAME, Key: key }),
-    { expiresIn: 3600 },
-  );
+  return getSignedUrl(s3, new GetObjectCommand({ Bucket: env.S3_BUCKET_NAME, Key: key }), {
+    expiresIn: 3600,
+  });
 }

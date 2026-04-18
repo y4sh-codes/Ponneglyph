@@ -13,8 +13,8 @@
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
-  --primary: #E3FF8F;
-  --primary-foreground: #22242A;
+  --primary: #e3ff8f;
+  --primary-foreground: #22242a;
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
   --muted: oklch(0.97 0 0);
@@ -48,8 +48,8 @@
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.205 0 0);
   --popover-foreground: oklch(0.985 0 0);
-  --primary: #E3FF8F;
-  --primary-foreground: #22242A;
+  --primary: #e3ff8f;
+  --primary-foreground: #22242a;
   --secondary: oklch(0.269 0 0);
   --secondary-foreground: oklch(0.985 0 0);
   --muted: oklch(0.269 0 0);
@@ -83,7 +83,7 @@
   --text-heading-1: 70px;
   --text-heading-1--line-height: 1em;
   --text-heading-1--letter-spacing: -0.03em;
-  
+
   --text-heading-2: 60px;
   --text-heading-2--line-height: 1em;
   --text-heading-2--letter-spacing: -0.02em;
@@ -120,27 +120,35 @@
   --text-sub--letter-spacing: 0.06em;
 
   /* Colors */
-  --color-black: #22242A;
+  --color-black: #22242a;
   --color-grey-1: #415762;
-  --color-grey-2: #B3BDBD;
-  --color-grey-3: #E5E6E6;
-  --color-grey-35: #F2F3F3;
-  --color-grey-4: #F7F8F8;
-  --color-error: #EE4444;
-  --color-success: #37955B;
-  --color-blue: #25C5FA;
+  --color-grey-2: #b3bdbd;
+  --color-grey-3: #e5e6e6;
+  --color-grey-35: #f2f3f3;
+  --color-grey-4: #f7f8f8;
+  --color-error: #ee4444;
+  --color-success: #37955b;
+  --color-blue: #25c5fa;
 
   /* Animations */
   --animate-ticker: ticker 20s linear infinite;
   --animate-ticker-reverse: ticker-reverse 20s linear infinite;
-  
+
   @keyframes ticker {
-    0% { transform: translateX(0); }
-    100% { transform: translateX(-50%); }
+    0% {
+      transform: translateX(0);
+    }
+    100% {
+      transform: translateX(-50%);
+    }
   }
   @keyframes ticker-reverse {
-    0% { transform: translateX(-50%); }
-    100% { transform: translateX(0); }
+    0% {
+      transform: translateX(-50%);
+    }
+    100% {
+      transform: translateX(0);
+    }
   }
 
   --color-sidebar-ring: var(--sidebar-ring);

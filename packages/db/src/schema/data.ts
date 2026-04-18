@@ -16,11 +16,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { user } from "./auth";
 
-export const sourceTypeEnum = pgEnum("source_type", [
-  "upload",
-  "external_url",
-  "api",
-]);
+export const sourceTypeEnum = pgEnum("source_type", ["upload", "external_url", "api"]);
 
 export const datasetStatusEnum = pgEnum("dataset_status", [
   "pending",
@@ -225,10 +221,7 @@ export const datasets = pgTable(
   },
   (table) => [
     index("datasets_source_id_idx").on(table.sourceId),
-    index("datasets_embedding_idx").using(
-      "hnsw",
-      table.embedding.op("vector_cosine_ops"),
-    ),
+    index("datasets_embedding_idx").using("hnsw", table.embedding.op("vector_cosine_ops")),
   ],
 );
 
@@ -247,18 +240,11 @@ export const datasetTags = pgTable(
   (table) => [
     index("dataset_tags_dataset_id_idx").on(table.datasetId),
     index("dataset_tags_tag_id_idx").on(table.tagId), // for fast filtering
-    uniqueIndex("dataset_tags_dataset_id_tag_id_unique").on(
-      table.datasetId,
-      table.tagId,
-    ),
+    uniqueIndex("dataset_tags_dataset_id_tag_id_unique").on(table.datasetId, table.tagId),
   ],
 );
 
-export const syncStatusEnum = pgEnum("sync_status", [
-  "running",
-  "completed",
-  "failed",
-]);
+export const syncStatusEnum = pgEnum("sync_status", ["running", "completed", "failed"]);
 
 export const syncLogs = pgTable("sync_logs", {
   id: uuid("id").primaryKey().defaultRandom(),

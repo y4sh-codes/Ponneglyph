@@ -15,8 +15,7 @@ const MIME_TO_FILE_TYPE: Record<string, string> = {
   "application/json": "json",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
   "application/vnd.ms-excel": "xls",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-    "docx",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
 };
 
 function resolveFileType(mime: string): string {
@@ -167,13 +166,9 @@ upload.post("/callback", zValidator("json", callbackSchema), async (c) => {
   const body = c.req.valid("json");
 
   if (body.status === "completed") {
-    console.log(
-      `[upload] completed: upload_id=${body.upload_id} dataset_id=${body.dataset_id}`,
-    );
+    console.log(`[upload] completed: upload_id=${body.upload_id} dataset_id=${body.dataset_id}`);
   } else {
-    console.error(
-      `[upload] failed: upload_id=${body.upload_id} error=${body.error}`,
-    );
+    console.error(`[upload] failed: upload_id=${body.upload_id} error=${body.error}`);
   }
 
   // TODO: push real-time notification to frontend (WebSocket/SSE)

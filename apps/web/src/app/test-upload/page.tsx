@@ -70,15 +70,18 @@ export default function TestUploadPage() {
   }
 
   return (
-    <main style={{ maxWidth: 640, margin: "4rem auto", padding: "0 1rem", fontFamily: "sans-serif" }}>
-      <h1 style={{ fontSize: "1.5rem", fontWeight: 700, marginBottom: "0.25rem" }}>
-        Upload Test
-      </h1>
+    <main
+      style={{ maxWidth: 640, margin: "4rem auto", padding: "0 1rem", fontFamily: "sans-serif" }}
+    >
+      <h1 style={{ fontSize: "1.5rem", fontWeight: 700, marginBottom: "0.25rem" }}>Upload Test</h1>
       <p style={{ color: "#666", marginBottom: "2rem" }}>
         Uploads go to R2 → RabbitMQ queue → Rust worker embeds via Gemini → DB
       </p>
 
-      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+      <form
+        onSubmit={handleSubmit}
+        style={{ display: "flex", flexDirection: "column", gap: "1rem" }}
+      >
         <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
           Title *
           <input
@@ -134,15 +137,9 @@ export default function TestUploadPage() {
 
         <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
           Thumbnail (optional)
-          <input
-            type="file"
-            accept="image/*"
-            onChange={handleThumbnailChange}
-          />
+          <input type="file" accept="image/*" onChange={handleThumbnailChange} />
           {thumbnail && (
-            <span style={{ fontSize: "0.875rem", color: "#555" }}>
-              Selected: {thumbnail.name}
-            </span>
+            <span style={{ fontSize: "0.875rem", color: "#555" }}>Selected: {thumbnail.name}</span>
           )}
         </label>
 
@@ -163,13 +160,29 @@ export default function TestUploadPage() {
         </label>
 
         {error && (
-          <div style={{ padding: "0.75rem", background: "#fee", border: "1px solid #fca", borderRadius: 6, color: "#c00" }}>
+          <div
+            style={{
+              padding: "0.75rem",
+              background: "#fee",
+              border: "1px solid #fca",
+              borderRadius: 6,
+              color: "#c00",
+            }}
+          >
             Error: {error}
           </div>
         )}
 
         {uploadId && (
-          <div style={{ padding: "0.75rem", background: "#efe", border: "1px solid #8c8", borderRadius: 6, color: "#060" }}>
+          <div
+            style={{
+              padding: "0.75rem",
+              background: "#efe",
+              border: "1px solid #8c8",
+              borderRadius: 6,
+              color: "#060",
+            }}
+          >
             Queued! upload_id: <strong>{uploadId}</strong>
             <br />
             <span style={{ fontSize: "0.875rem" }}>
