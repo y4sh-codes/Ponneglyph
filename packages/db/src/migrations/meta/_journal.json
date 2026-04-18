@@ -36,6 +36,13 @@
       "when": 1776400000000,
       "tag": "0004_volunteer_jsonb_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1776500000000,
+      "tag": "0005_volunteer_normalized_model",
+      "breakpoints": true
     }
   ]
 }

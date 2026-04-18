@@ -77,7 +77,12 @@ export async function requireAuthenticatedUser(
     throw new HTTPException(401, { message: "Invalid or expired session" });
   }
 
-  c.set("userId", sessionResult.rows[0].user_id);
+  const sessionRow = sessionResult.rows[0];
+  if (!sessionRow) {
+    throw new HTTPException(401, { message: "Invalid or expired session" });
+  }
+
+  c.set("userId", sessionRow.user_id);
   await next();
 }
 
